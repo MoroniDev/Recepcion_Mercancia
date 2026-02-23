@@ -30,15 +30,23 @@ namespace Recepcion_Mercancia
         private List<PolizaDTO> _polizasGenerar = new List<PolizaDTO>();
 
         // ===== Variables para Bitácora =====
-        private string rutaBitacoraBase = @"D:\Users\Expiriti\Documents\Bitacora RC"; /*@"C:\Users\Soporte2\Documents\Bitacora RC";*/
+        private string rutaBitacoraBase = @"D:\Users\Expiriti\Documents\Bitacora RC";/*@"C:\Users\Soporte2\Documents\Bitacora RC";*/
         private DataTable _datosOriginales = null;
 
         // ===== Variables para proceso automático =====
-        private System.Threading.Timer _timerAutomatico;
         private bool _procesoAutomaticoActivo = false;
+        private string nombreTareaWindows = "RecepcionMercancia_Auto";
 
         public Form1()
         {
+            // Verificar si se ejecuta en modo automático (sin UI)
+            if (Environment.GetCommandLineArgs().Length > 1 && Environment.GetCommandLineArgs()[1] == "/auto")
+            {
+                // Modo automático - ejecutar y salir
+                EjecutarModoAutomatico();
+                return;
+            }
+
             InitializeComponent();
 
             // Conectar el evento Click del botón automático
@@ -48,6 +56,7 @@ namespace Recepcion_Mercancia
             ConfigurarDataGridView();
             InicializarSDKContpaqi();
             ConfigurarBitacora();
+            VerificarEstadoTareaProgramada();
 
             if (System.IO.File.Exists(System.IO.Path.Combine(iconDir, "logo_icon.ico")))
             {
@@ -109,6 +118,33 @@ namespace Recepcion_Mercancia
                 lblEstado.Text = $"Error al configurar bitácora: {ex.Message}";
                 lblEstado.ForeColor = Color.Red;
             }
+        }
+
+        private void VerificarEstadoTareaProgramada()
+        {
+            try
+            {
+                // Verificar si la tarea ya existe
+                string verificarTarea = $"/c schtasks /query /tn \"{nombreTareaWindows}\" 2>&1";
+                System.Diagnostics.Process process = new System.Diagnostics.Process();
+                process.StartInfo.FileName = "cmd.exe";
+                process.StartInfo.Arguments = verificarTarea;
+                process.StartInfo.UseShellExecute = false;
+                process.StartInfo.RedirectStandardOutput = true;
+                process.StartInfo.CreateNoWindow = true;
+                process.Start();
+                string output = process.StandardOutput.ReadToEnd();
+                process.WaitForExit();
+
+                if (!output.Contains("ERROR"))
+                {
+                    _procesoAutomaticoActivo = true;
+                    BtnAutomatico.Text = "Desactivar Automático";
+                    BtnAutomatico.BackColor = Color.LightCoral;
+                    lblEstado.Text = "Proceso automático activo (tarea programada)";
+                }
+            }
+            catch { }
         }
 
         #endregion
@@ -204,195 +240,191 @@ namespace Recepcion_Mercancia
 
         #endregion
 
-        #region Proceso Automático
+        #region Proceso Automático con Task Scheduler
 
         private void BtnAutomatico_Click(object sender, EventArgs e)
         {
             if (!_procesoAutomaticoActivo)
             {
-                // Iniciar proceso automático
-                IniciarProcesoAutomatico();
+                // Activar proceso automático
+                ActivarTareaProgramada();
             }
             else
             {
-                // Detener proceso automático
-                DetenerProcesoAutomatico();
+                // Desactivar proceso automático
+                DesactivarTareaProgramada();
             }
-
         }
 
-        private void IniciarProcesoAutomatico()
+        private void ActivarTareaProgramada()
         {
             try
             {
-                // Calcular el tiempo hasta el próximo día 20
-                DateTime ahora = DateTime.Now;
-                DateTime proximoDia20 = new DateTime(ahora.Year, ahora.Month, 20);
+                string rutaExe = Application.ExecutablePath;
 
-                // Si ya pasó el día 20 de este mes, programar para el próximo mes
-                if (ahora.Day > 20 || (ahora.Day == 20 && ahora.Hour >= 0)) // Si ya pasó o es hoy pero después de la hora actual
-                {
-                    proximoDia20 = proximoDia20.AddMonths(1);
-                }
-                else if (ahora.Day == 20)
-                {
-                    // Si es exactamente el día 20, establecer la hora actual
-                    proximoDia20 = ahora;
-                }
+                // Comando para crear tarea programada que se ejecuta diariamente a las 3:00 AM
+                string comando = $@"/c schtasks /create /tn ""{nombreTareaWindows}"" /tr ""{rutaExe} /auto"" /sc daily /st 03:00 /f";
 
-                // Calcular los milisegundos hasta el próximo día 20
-                TimeSpan tiempoHastaProximo = proximoDia20 - ahora;
-                int milisegundosHastaProximo = (int)tiempoHastaProximo.TotalMilliseconds;
-
-                // Asegurar que no sea negativo
-                if (milisegundosHastaProximo < 0)
-                {
-                    milisegundosHastaProximo = 0;
-                }
-
-                // Configurar el timer para que se ejecute el día 20 de cada mes
-                _timerAutomatico = new System.Threading.Timer(
-                    EjecutarProcesoAutomatico,
-                    null,
-                    milisegundosHastaProximo, // Esperar hasta el próximo día 20
-                    Timeout.Infinite // No repetir automáticamente
-                );
+                System.Diagnostics.Process.Start("cmd.exe", comando);
 
                 _procesoAutomaticoActivo = true;
-                BtnAutomatico.Text = "Detener Automático";
+                BtnAutomatico.Text = "Desactivar Automático";
                 BtnAutomatico.BackColor = Color.LightCoral;
 
-                lblEstado.Text = $"Proceso automático iniciado - Se ejecutará el {proximoDia20:dd/MM/yyyy HH:mm}";
+                lblEstado.Text = "✓ Automático activado - Se ejecutará diariamente a las 3:00 AM";
                 lblEstado.ForeColor = Color.Green;
 
                 // Registrar en bitácora
                 string logPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "automatico.log");
-                File.AppendAllText(logPath, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] Proceso automático INICIADO - Próxima ejecución: {proximoDia20:yyyy-MM-dd HH:mm}\n");
+                File.AppendAllText(logPath, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] Tarea programada CREADA - Se ejecutará diariamente a las 3:00 AM\n");
+
+                // Preguntar si quiere ejecutar ahora
+                if (MessageBox.Show("¿Desea ejecutar el proceso automático ahora mismo para probar?",
+                    "Ejecutar Ahora", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
+                {
+                    EjecutarProcesoAutomaticoDirecto();
+                }
             }
             catch (Exception ex)
             {
-                lblEstado.Text = $"Error al iniciar proceso automático: {ex.Message}";
+                lblEstado.Text = $"Error al activar automático: {ex.Message}";
                 lblEstado.ForeColor = Color.Red;
+                MessageBox.Show($"Error al crear tarea programada: {ex.Message}", "Error",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
-        private void DetenerProcesoAutomatico()
+        private void DesactivarTareaProgramada()
         {
             try
             {
-                if (_timerAutomatico != null)
-                {
-                    _timerAutomatico.Dispose();
-                    _timerAutomatico = null;
-                }
+                // Comando para eliminar tarea programada
+                string comando = $@"/c schtasks /delete /tn ""{nombreTareaWindows}"" /f";
+
+                System.Diagnostics.Process.Start("cmd.exe", comando);
 
                 _procesoAutomaticoActivo = false;
                 BtnAutomatico.Text = "Automático";
                 BtnAutomatico.BackColor = SystemColors.Control;
 
-                lblEstado.Text = "Proceso automático detenido";
+                lblEstado.Text = "✓ Automático desactivado";
                 lblEstado.ForeColor = Color.Black;
 
                 // Registrar en bitácora
                 string logPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "automatico.log");
-                File.AppendAllText(logPath, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] Proceso automático DETENIDO\n");
+                File.AppendAllText(logPath, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] Tarea programada ELIMINADA\n");
             }
             catch (Exception ex)
             {
-                lblEstado.Text = $"Error al detener proceso automático: {ex.Message}";
+                lblEstado.Text = $"Error al desactivar automático: {ex.Message}";
                 lblEstado.ForeColor = Color.Red;
             }
         }
 
-        private async void EjecutarProcesoAutomatico(object state)
+        private void EjecutarModoAutomatico()
         {
             try
             {
-                // Registrar inicio de ejecución
+                // Log de inicio
                 string logPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "automatico.log");
-                File.AppendAllText(logPath, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] Ejecutando proceso automático...\n");
+                File.AppendAllText(logPath, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] INICIANDO MODO AUTOMÁTICO\n");
 
-                // Necesitamos invocar en el hilo principal de la UI
-                if (this.InvokeRequired)
+                // Inicializar conexiones
+                CargarCadenaConexion();
+                InicializarSDKContpaqi();
+
+                // Esperar a que SDK esté listo
+                int intentos = 0;
+                while (string.IsNullOrEmpty(_empresaActual) && intentos < 30)
                 {
-                    this.Invoke(new Action(async () =>
-                    {
-                        await EjecutarSecuenciaAutomatica();
-                    }));
+                    Thread.Sleep(1000);
+                    intentos++;
                 }
-                else
+
+                if (string.IsNullOrEmpty(_empresaActual))
                 {
-                    await EjecutarSecuenciaAutomatica();
+                    throw new Exception("No se pudo conectar a CONTPAQi después de 30 segundos");
                 }
+
+                // Ejecutar carga y generación
+                CargarDatosSQL();
+
+                // Log de finalización
+                File.AppendAllText(logPath, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] MODO AUTOMÁTICO COMPLETADO\n");
+
+                // Cerrar aplicación
+                Environment.Exit(0);
             }
             catch (Exception ex)
             {
-                // Registrar error
                 string logPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "automatico.log");
                 File.AppendAllText(logPath, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] ERROR: {ex.Message}\n");
+                Environment.Exit(1);
             }
         }
 
-        private async Task EjecutarSecuenciaAutomatica()
+        private async void EjecutarProcesoAutomaticoDirecto()
         {
             try
             {
-                // Verificar que el proceso automático sigue activo
-                if (!_procesoAutomaticoActivo) return;
-
-                // Mostrar estado
                 lblEstado.Text = "Ejecutando proceso automático...";
                 lblEstado.ForeColor = Color.Blue;
                 Application.DoEvents();
 
-                // PASO 1: Ejecutar Cargar Datos
-                if (_procesoAutomaticoActivo)
-                {
-                    btnCargar_Click(null, null);
+                // PASO 1: Cargar Datos
+                CargarDatosSQL();
+                await Task.Delay(2000);
 
-                    // Esperar un momento para que termine la carga
-                    await Task.Delay(2000);
+                // PASO 2: Generar Pólizas
+                if (_polizasGenerar != null && _polizasGenerar.Count > 0)
+                {
+                    List<PolizaDTO> exitosas = new List<PolizaDTO>();
+                    List<PolizaDTO> fallidas = new List<PolizaDTO>();
+
+                    progressBar.Visible = true;
+                    progressBar.Maximum = _polizasGenerar.Count;
+                    progressBar.Value = 0;
+
+                    foreach (var poliza in _polizasGenerar)
+                    {
+                        lblEstado.Text = $"Generando: {poliza.Serie}{poliza.Folio}";
+                        Application.DoEvents();
+
+                        bool resultado = CrearPolizaContpaqi(poliza, out string mensajeError);
+                        if (resultado)
+                        {
+                            exitosas.Add(poliza);
+                        }
+                        else
+                        {
+                            fallidas.Add(poliza);
+                        }
+                        progressBar.Value++;
+                    }
+
+                    progressBar.Visible = false;
+
+                    // Generar bitácora
+                    if (_datosOriginales != null)
+                    {
+                        GenerarBitacoraExcel(_datosOriginales, exitosas, fallidas);
+                    }
+
+                    lblEstado.Text = $"Proceso completado: {exitosas.Count} exitosas, {fallidas.Count} fallidas";
                 }
-
-                // PASO 2: Verificar que hay pólizas para generar
-                if (_procesoAutomaticoActivo && _polizasGenerar != null && _polizasGenerar.Count > 0)
+                else
                 {
-                    // Ejecutar Generar Pólizas
-                    btnGenerarPolizas_Click(null, null);
-
-                    // Registrar éxito
-                    string logPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "automatico.log");
-                    File.AppendAllText(logPath, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] Proceso automático COMPLETADO - {_polizasGenerar.Count} pólizas procesadas\n");
-                }
-                else if (_procesoAutomaticoActivo)
-                {
-                    lblEstado.Text = "Proceso automático: No hay pólizas para generar";
-                    lblEstado.ForeColor = Color.Orange;
-
-                    // Registrar advertencia
-                    string logPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "automatico.log");
-                    File.AppendAllText(logPath, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] Proceso automático: No hay pólizas para generar\n");
+                    lblEstado.Text = "No hay pólizas para generar";
                 }
             }
             catch (Exception ex)
             {
-                // Registrar error
-                string logPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "automatico.log");
-                File.AppendAllText(logPath, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] Error en ejecución automática: {ex.Message}\n");
-
-                lblEstado.Text = $"Error en proceso automático: {ex.Message}";
+                lblEstado.Text = $"Error: {ex.Message}";
                 lblEstado.ForeColor = Color.Red;
-            }
-        }
 
-        protected override void OnFormClosing(FormClosingEventArgs e)
-        {
-            if (_timerAutomatico != null)
-            {
-                _timerAutomatico.Dispose();
-                _timerAutomatico = null;
+                string logPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "automatico.log");
+                File.AppendAllText(logPath, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] Error: {ex.Message}\n");
             }
-            base.OnFormClosing(e);
         }
 
         #endregion
@@ -415,29 +447,21 @@ namespace Recepcion_Mercancia
                 btnCargar.Enabled = false;
                 Application.DoEvents();
 
-                // ===== NUEVA LÓGICA: Calcular período desde 21 del mes anterior hasta 20 del mes actual =====
+                // ===== NUEVA LÓGICA: 20 días hacia atrás desde hoy =====
                 DateTime ahora = DateTime.Now;
 
-                // Calcular fecha de corte: 20 del mes actual
-                DateTime fechaCorte = new DateTime(ahora.Year, ahora.Month, 20);
+                // Calcular fecha de fin: HOY (incluyendo hasta las 23:59:59)
+                DateTime fechaFin = ahora.Date.AddDays(1).AddSeconds(-1); // Hoy a las 23:59:59
 
-                // Calcular fecha de inicio: 21 del mes anterior
-                DateTime fechaInicio = fechaCorte.AddMonths(-1).AddDays(1); // 21 del mes anterior
-
-                // Si hoy es después del 20, ajustamos para que el corte sea el próximo 20
-                if (ahora.Day > 20)
-                {
-                    fechaCorte = fechaCorte.AddMonths(1);
-                    fechaInicio = fechaCorte.AddMonths(-1).AddDays(1);
-                }
+                // Calcular fecha de inicio: HOY menos 20 días (desde las 00:00:00)
+                DateTime fechaInicio = ahora.Date.AddDays(-20); // 20 días atrás a las 00:00:00
 
                 // Mostrar en el label el período que se está consultando
-                lblEstado.Text = $"Consultando período: {fechaInicio:dd/MM/yyyy} al {fechaCorte:dd/MM/yyyy}";
+                lblEstado.Text = $"Consultando período: {fechaInicio:dd/MM/yyyy} al {fechaFin:dd/MM/yyyy}";
                 Application.DoEvents();
 
                 /* 
-                 * CONSULTA MODIFICADA: Usa rango de fechas en lugar de mes/año específico
-                 * Esto capturará documentos desde el 21 del mes anterior hasta el 20 del mes actual
+                 * CONSULTA: Usa rango de fechas de 20 días hacia atrás
                  */
                 string consultaSQL = @"
             SELECT 
@@ -454,7 +478,7 @@ namespace Recepcion_Mercancia
                 ON ddi.ProductID = p.ProductID
             WHERE dd.ModuleID IN (1253, 1327)
             AND dd.DateDocument >= @FechaInicio
-            AND dd.DateDocument <= @FechaCorte
+            AND dd.DateDocument <= @FechaFin
             ORDER BY dd.Folio";
 
                 DataTable tablaResultados = new DataTable();
@@ -462,14 +486,14 @@ namespace Recepcion_Mercancia
                 using (SqlConnection conexion = new SqlConnection(connectionString))
                 {
                     conexion.Open();
-                    lblEstado.Text = $"Ejecutando consulta para período {fechaInicio:dd/MM/yyyy} - {fechaCorte:dd/MM/yyyy}...";
+                    lblEstado.Text = $"Ejecutando consulta para período {fechaInicio:dd/MM/yyyy} - {fechaFin:dd/MM/yyyy}...";
                     Application.DoEvents();
 
                     using (SqlCommand comando = new SqlCommand(consultaSQL, conexion))
                     {
-                        // Parámetros de fecha en lugar de mes/año
-                        comando.Parameters.AddWithValue("@FechaInicio", fechaInicio.Date);
-                        comando.Parameters.AddWithValue("@FechaCorte", fechaCorte.Date);
+                        // Parámetros de fecha
+                        comando.Parameters.AddWithValue("@FechaInicio", fechaInicio);
+                        comando.Parameters.AddWithValue("@FechaFin", fechaFin);
 
                         using (SqlDataAdapter adaptador = new SqlDataAdapter(comando))
                         {
@@ -503,23 +527,44 @@ namespace Recepcion_Mercancia
                     }
                     else
                     {
-                        // Si no se pudo conectar, continuar sin validación
-                        lblEstado.Text = "No se pudo conectar a CONTPAQi. Procesando sin validación.";
-                        lblEstado.ForeColor = Color.Orange;
-                        PrepararPolizasDesdeDatos(tablaResultados);
+                        // Si no se pudo conectar, mostrar error y detener
+                        lblEstado.Text = "ERROR: No se pudo conectar a CONTPAQi para validación. Proceso detenido.";
+                        lblEstado.ForeColor = Color.Red;
+
+                        if (this.Visible) // Solo mostrar mensaje si hay UI
+                        {
+                            MessageBox.Show(
+                                "No se pudo conectar a CONTPAQi para validar duplicados.\n\n" +
+                                "Verifique:\n" +
+                                "1. Que SQL Server esté en ejecución\n" +
+                                "2. Que la base de datos de CONTPAQi exista\n" +
+                                "3. La cadena de conexión en app.config",
+                                "Error de Validación",
+                                MessageBoxButtons.OK,
+                                MessageBoxIcon.Error);
+                        }
+                        return;
                     }
                 }
                 else
                 {
-                    lblEstado.Text = "No hay empresa CONTPAQi abierta. Procesando sin validación.";
-                    lblEstado.ForeColor = Color.Orange;
+                    lblEstado.Text = "ERROR: No hay empresa CONTPAQi abierta. Proceso detenido.";
+                    lblEstado.ForeColor = Color.Red;
 
-                    // Preparar pólizas sin validación
-                    PrepararPolizasDesdeDatos(tablaResultados);
+                    if (this.Visible)
+                    {
+                        MessageBox.Show(
+                            "No hay empresa de CONTPAQi abierta.\n\n" +
+                            "El proceso requiere una empresa abierta para continuar.",
+                            "Error de Conexión",
+                            MessageBoxButtons.OK,
+                            MessageBoxIcon.Error);
+                    }
+                    return;
                 }
 
                 int totalRegistros = tablaResultados.Rows.Count;
-                lblEstado.Text = $"Carga completada: {totalRegistros} registros del período {fechaInicio:dd/MM/yyyy} - {fechaCorte:dd/MM/yyyy} ({_polizasGenerar.Count} pólizas)";
+                lblEstado.Text = $"Carga completada: {totalRegistros} registros del período {fechaInicio:dd/MM/yyyy} - {fechaFin:dd/MM/yyyy} ({_polizasGenerar.Count} pólizas)";
                 lblEstado.ForeColor = totalRegistros > 0 ? Color.Green : Color.Orange;
 
                 // Habilitar botón de generación si hay datos y SDK está conectado
@@ -527,7 +572,7 @@ namespace Recepcion_Mercancia
 
                 // Registrar en el log automático el período procesado
                 string logPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "automatico.log");
-                File.AppendAllText(logPath, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] Período procesado: {fechaInicio:yyyy-MM-dd} a {fechaCorte:yyyy-MM-dd} - {totalRegistros} registros\n");
+                File.AppendAllText(logPath, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] Período procesado: {fechaInicio:yyyy-MM-dd} a {fechaFin:yyyy-MM-dd} - {totalRegistros} registros\n");
             }
             catch (SqlException ex)
             {
@@ -1201,7 +1246,7 @@ namespace Recepcion_Mercancia
 
         private string ObtenerCuentaContableAbono()
         {
-           // return "20103000";
+            //return "20103000";
             return "02105100001";
         }
 
